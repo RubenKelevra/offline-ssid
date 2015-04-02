@@ -1,28 +1,70 @@
 #!/bin/sh
-# fnetstat by RubenKelevra 2013 - cyrond@gmail.com
+# ff-offline-ssid by RubenKelevra 2013-2014 - cyrond@gmail.com
 # Lizenz: AGPL 3.0 
 
-#Warning: This script will immediately set the ssid configured in uci if its changed.
+#Warning: If SSID was changed in UCI, which belongs to freifunk, you need to run "wifi" before you rerun this script again.
 
 #This script expect that an temporary SSID is set on boot. The Script will read ssid_online and set it when node is online.
+
+RUNTIME=60 #default runtime in seconds
+END=0
+
+#Parameter Checking
+if ! [ $# -eq 1 -o "$1" -eq "$1" ] 2>/dev/null; then
+	echo "Error: Please define a runtime in seconds" && exit 2 
+else
+	RUNTIME=$1
+	echo "Debug: Runtime will be $RUNTIME seconds, please restart me after this time"
+fi
+
+START=`cat /proc/uptime | cut -d"." -f1`
+END=$(( $START + $RUNTIME ))
+END=$(( $END - 1 ))
+
+#running-pid
+OWNPID=$$
+PIDFILE='/tmp/ff-offline-ssid.pid'
+
+if [ ! -f "$PIDFILE" -a -f "$PIDFILE"_"STOP" ]; then
+	sleep 1 #fix possible race-conditions
+fi
+
+if [ ! -f "$PIDFILE" ]; then
+	echo $OWNPID > $PIDFILE
+	[ -f "$PIDFILE"_"STOP" ] && rm "$PIDFILE"_"STOP" #cleanup
+else
+	#If already a pid and a stopfile exists, were exiting now.
+	if ! kill -0 $(cat "$PIDFILE") > /dev/null 2>&1; then
+		echo $OWNPID > $PIDFILE
+		[ -f "$PIDFILE"_"STOP" ] && rm "$PIDFILE"_"STOP" #cleanup
+	else
+		if [ -f "$PIDFILE"_"STOP" ]; then
+			logger "Warning: offline-ssid exiting because pid-file (pid running!) and stopfile already exist."
+			exit 1
+		fi
+		touch "$PIDFILE"_"STOP"
+		while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
+			[ ! -f $PIDFILE ] && echo $OWNPID > $PIDFILE; rm "$PIDFILE"_"STOP"; break
+			sleep 1
+		done
+	fi
+fi
 
 #Options
 SLEEP=4 # wait time in seconds before rechecking
 ACTIVE_CHECK=1 # do pinging selected gateway via L2-ping, if last-seen is to high
-SSID_PHY0="wireless.wifi_freifunk.ssid_online"
-SSID_PHY0_BOOT="wireless.wifi_freifunk.ssid"
+SSID_PHY0="wireless.wifi2.ssid_online"
+SSID_PHY0_BOOT="wireless.wifi2.ssid"
 HOSTAPD_PHY0="/var/run/hostapd-phy0.conf"
-SSID_PHY1="wireless.wifi_freifunk5.ssid_online" #if phy1.conf is not found, this will be not used
-SSID_PHY1_BOOT="wireless.wifi_freifunk5.ssid"
+SSID_PHY1="wireless.wifi5.ssid_online" #if phy1.conf is not found, this will be not used
+SSID_PHY1_BOOT="wireless.wifi5.ssid"
 HOSTAPD_PHY1="/var/run/hostapd-phy1.conf" 
 PING_CNT=3 #Ping-Packets for ACTIVE_CHECK: 3 is recommented, 5-10 for lossy connections
 OGM_INT_MULT=2 #Tolerable missing OGMs, before pinging (if ACTIVE_CHECK=1): 1 for fast responsive, 2 for slower reactions, 3-4 for lossy connections
 LED_STATUS=1
 
 #vars
-RUNTIME=60 #default runtime in seconds
 MODE=1
-END=0
 GWQ=0
 GWM=""
 GWLS=0
@@ -38,21 +80,12 @@ SSID_0_OFFLINE=""
 SSID_1_BOOT=""
 SSID_1_ONLINE=""
 SSID_1_OFFLINE=""
-DEVICE=`cat /proc/sys/kernel/hostname`
 CHANGED=0
 FORCE_CHANGE=0
 
 #checking batctl
 if [ $ACTIVE_CHECK -eq 1 ]; then
 	batctl -v >/dev/null 2>&1 || { echo >&2 "batctl is required for Active-Checking, but it's not installed.  Aborting."; exit 1; }
-fi
-
-#Parameter Checking
-if ! [ $# -eq 1 -o "$1" -eq "$1" ] 2>/dev/null; then
-	echo "Error: Please define a runtime in seconds" && exit 2 
-else
-	RUNTIME=$1
-	echo "Debug: Runtime will be $RUNTIME seconds, please restart me after this time"
 fi
 
 #Checking Files and Options
@@ -90,12 +123,18 @@ if [ $LED_STATUS -eq 1 ]; then
 	get_status_led
 fi
 
-START=`cat /proc/uptime | cut -d"." -f1`
-END=$(( $START + $RUNTIME ))
-END=$(( $END - 1 ))
+DEVICE=`cat /proc/sys/kernel/hostname`
+if [ ${#DEVICE} -gt 16 ]; then #cut device-name
+	DEVICE="${DEVICE:0:13}..."
+fi
 
-while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]
-do
+while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
+	if [ -f "$PIDFILE"_"STOP" ]; then
+		echo "were exiting now, because were requested to."
+		rm $PIDFILE
+		exit 42
+	fi
+	
 	case $MODE in
 	1) #check: batman knows an gateway
 		GWQ=`cat /sys/kernel/debug/batman_adv/bat0/gateways | egrep ' \([\ 0-9]+\) ' | cut -d\( -f2 | cut -d\) -f1 | sort -n | tail -n1`
@@ -213,7 +252,9 @@ do
 	fi
 	SSID_0_OFFLINE="Offline-$SSID_0_OFFLINE-$DEVICE"
 
-	SSID_0=`cat $HOSTAPD_PHY0 | grep "^ssid="`
+	SSID_0=`cat $HOSTAPD_PHY0 | grep "^ssid=$SSID_0_ONLINE"`
+	[ -z "$SSID_0" ] && SSID_0=`cat $HOSTAPD_PHY0 | grep "^ssid=$SSID_0_OFFLINE"`
+	[ -z "$SSID_0" ] && SSID_0=`cat $HOSTAPD_PHY0 | grep "^ssid=$SSID_0_BOOT"`
 	SSID_0=${SSID_0:5} #rm ssid=
 	
 #	echo "Debug: RADIO0:"
@@ -226,7 +267,7 @@ do
 		continue
 	fi
 	
-	echo -n "Debug: Hostap gave us SSID_0='$SSID_0', "
+	echo -n "Debug: Hostapd gave us SSID_0='$SSID_0', "
 
 	if [ "$SSID_0" == "$SSID_0_ONLINE" ]; then
 		ISOFFLINE=0
@@ -257,7 +298,9 @@ do
 		fi
 		SSID_1_OFFLINE="Offline-$SSID_1_OFFLINE-$DEVICE"
 
-		SSID_1=`cat $HOSTAPD_PHY1 | grep "^ssid="`
+		SSID_1=`cat $HOSTAPD_PHY1 | grep "^ssid=$SSID_1_ONLINE"`
+		[ -z "$SSID_1" ] && SSID_1=`cat $HOSTAPD_PHY1 | grep "^ssid=$SSID_1_OFFLINE"`
+		[ -z "$SSID_1" ] && SSID_1=`cat $HOSTAPD_PHY1 | grep "^ssid=$SSID_1_BOOT"`
 		SSID_1=${SSID_1:5} #rm ssid=
 	
 #		echo "Debug: RADIO1:"
@@ -270,7 +313,7 @@ do
 			continue
 		fi
 	
-		echo -n "Debug: Hostap gave us SSID_1='$SSID_1', "
+		echo -n "Debug: Hostapd gave us SSID_1='$SSID_1', "
 
 		if [ $ISOFFLINE -eq 0 -a "$SSID_1" != "$SSID_1_ONLINE" -a $FORCE_CHANGE -eq 0 ]; then
 			FORCE_CHANGE=1
@@ -335,18 +378,16 @@ do
 			continue
 		fi	
 		
-		rm /tmp/hostapd-phy0.conf.temp 2>/dev/null
-		cat /var/run/hostapd-phy0.conf | grep -v "^ssid=" > /tmp/hostapd-phy0.conf.temp
-		echo "$SSID_0" >> /tmp/hostapd-phy0.conf.temp
-		mv /tmp/hostapd-phy0.conf.temp /var/run/hostapd-phy0.conf
+		[ ! -z "$SSID_0_ONLINE" ] && sed -i -e "s/^ssid=$SSID_0_ONLINE/$SSID_0/" "$HOSTAPD_PHY0"
+		[ ! -z "$SSID_0_OFFLINE" ] && sed -i -e "s/^ssid=$SSID_0_OFFLINE/$SSID_0/" "$HOSTAPD_PHY0"
+		[ ! -z "$SSID_0_BOOT" ] && sed -i -e "s/^ssid=$SSID_0_BOOT/$SSID_0/" "$HOSTAPD_PHY0"
 		
 		if [ $RADIOONE -eq 1 ]; then
 		
 			if [ -f $HOSTAPD_PHY1 ]; then
-				rm /tmp/hostapd-phy1.conf.temp 2>/dev/null
-				cat /var/run/hostapd-phy1.conf | grep -v "^ssid=" > /tmp/hostapd-phy1.conf.temp
-				echo "$SSID_1" >> /tmp/hostapd-phy1.conf.temp
-				mv /tmp/hostapd-phy1.conf.temp /var/run/hostapd-phy1.conf
+				[ ! -z "$SSID_1_ONLINE" ] && sed -i -e "s/^ssid=$SSID_1_ONLINE/$SSID_1/" "$HOSTAPD_PHY1"
+				[ ! -z "$SSID_1_OFFLINE" ] && sed -i -e "s/^ssid=$SSID_1_OFFLINE/$SSID_1/" "$HOSTAPD_PHY1"
+				[ ! -z "$SSID_1_BOOT" ] && sed -i -e "s/^ssid=$SSID_1_BOOT/$SSID_1/" "$HOSTAPD_PHY1"
 			else
 				echo "Error: hostapd-phy1.conf is gone ... we cant process the SSID-Change for Radio1"
 			fi
@@ -357,3 +398,4 @@ do
 		echo "done."
 	fi
 done
+[ -f "$PIDFILE" ] && rm "$PIDFILE" #cleanup
