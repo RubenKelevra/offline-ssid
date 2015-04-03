@@ -32,9 +32,4 @@ define Package/gluon-authorized-keys/install
 	$(CP) ./files/* $(1)/
 endef
 
-define Package/gluon-offline-ssid/postinst
-#!/bin/sh
-
-endef
-
 $(eval $(call BuildPackage,gluon-offline-ssid))
