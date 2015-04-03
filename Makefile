@@ -28,7 +28,7 @@ endef
 define Build/Compile
 endef
 
-define Package/gluon-authorized-keys/install
+define Package/gluon-offline-ssid/install
 	$(CP) ./files/* $(1)/
 endef
 
