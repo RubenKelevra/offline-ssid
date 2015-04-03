@@ -20,20 +20,16 @@ endef
 
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) ./src/* $(PKG_BUILD_DIR)/
 endef
 
 define Build/Configure
 endef
 
 define Build/Compile
-	CFLAGS="$(TARGET_CFLAGS)" CPPFLAGS="$(TARGET_CPPFLAGS)" $(MAKE) -C $(PKG_BUILD_DIR) $(TARGET_CONFIGURE_OPTS)
 endef
 
-define Package/gluon-offline-ssid/install
+define Package/gluon-authorized-keys/install
 	$(CP) ./files/* $(1)/
-	$(INSTALL_DIR) $(1)/usr/sbin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/ff-offline-ssid.sh $(1)/usr/sbin/
 endef
 
 define Package/gluon-offline-ssid/postinst
