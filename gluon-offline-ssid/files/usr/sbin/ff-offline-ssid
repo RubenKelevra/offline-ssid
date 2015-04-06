@@ -33,7 +33,7 @@ if [ ! -f "$PIDFILE" ]; then
 	echo $OWNPID > $PIDFILE
 	[ -f "$PIDFILE"_"STOP" ] && rm "$PIDFILE"_"STOP" #cleanup
 else
-	#If already a pid and a stopfile exists, were exiting now.
+	#If already a pid and a stopfile exists, we're exiting now.
 	if ! kill -0 $(cat "$PIDFILE") > /dev/null 2>&1; then
 		echo $OWNPID > $PIDFILE
 		[ -f "$PIDFILE"_"STOP" ] && rm "$PIDFILE"_"STOP" #cleanup
@@ -130,7 +130,7 @@ fi
 
 while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 	if [ -f "$PIDFILE"_"STOP" ]; then
-		echo "were exiting now, because were requested to."
+		echo "we're exiting now, because we're requested to."
 		rm $PIDFILE
 		exit 42
 	fi
