@@ -15,7 +15,7 @@ https://github.com/VfN-NRW/gluon/blob/2014.4.x/patches/packages/gluon/0004-backp
 
 After adding the needed patch(es) to gluon, do the following to add this package to your gluon firmware:
 
-Add this git to your modules:
+Add this git to your modules:  
 -append the module "offlinessid" to GLUON_SITE_FEEDS in modules  
 -append the following to fetch this repo:  
 `PACKAGES_OFFLINESSID_REPO=https://github.com/FF-NRW/offline-ssid.git`  `PACKAGES_OFFLINESSID_COMMIT=6c06021e5bfde2ffb708fddd5b2279e4505323da`  
