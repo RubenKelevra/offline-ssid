@@ -1,5 +1,5 @@
 #!/bin/sh
-# ff-offline-ssid by RubenKelevra 2013-2014 - cyrond@gmail.com
+# ff-offline-ssid by RubenKelevra 2013-2015 - cyrond@gmail.com
 # Lizenz: AGPL 3.0 
 
 #Warning: If SSID was changed in UCI, which belongs to freifunk, you need to run "wifi" before you rerun this script again.
