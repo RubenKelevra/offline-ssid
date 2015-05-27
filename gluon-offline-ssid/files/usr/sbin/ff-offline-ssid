@@ -61,7 +61,7 @@ SSID_PHY1_BOOT="wireless.client_radio1.ssid"
 HOSTAPD_PHY1="/var/run/hostapd-phy1.conf" 
 PING_CNT=3 #Ping-Packets for ACTIVE_CHECK: 3 is recommented, 5-10 for lossy connections
 OGM_INT_MULT=2 #Tolerable missing OGMs, before pinging (if ACTIVE_CHECK=1): 1 for fast responsive, 2 for slower reactions, 3-4 for lossy connections
-LED_STATUS=1
+LED_STATUS=1 # Change System-LED, when offline: pulsing flashes with long pauses
 
 #vars
 MODE=1
@@ -352,7 +352,7 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 		if [ $OFFLINE -eq 1 ]; then
 			SSID_0=$SSID_0_OFFLINE
 			if [ $LED_STATUS -eq 1 ]; then
-				status_led_set_timer 60 400
+				status_led_set_timer 50 1200
 			fi
 		else
 			SSID_0=$SSID_0_ONLINE
