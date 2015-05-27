@@ -391,7 +391,7 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 				[ ! -z "$SSID_1_OFFLINE" ] && sed -i -e "s/^ssid=$SSID_1_OFFLINE/$SSID_1/" "$HOSTAPD_PHY1"
 				[ ! -z "$SSID_1_BOOT" ] && sed -i -e "s/^ssid=$SSID_1_BOOT/$SSID_1/" "$HOSTAPD_PHY1"
 			else
-				echo "Error: Hostapd-phy1.conf is gone ... we cant process the SSID-change for radio1"
+				echo "Error: Hostapd-phy1.conf is gone ... we can't process the SSID-change for radio1"
 			fi
 		fi
 		
