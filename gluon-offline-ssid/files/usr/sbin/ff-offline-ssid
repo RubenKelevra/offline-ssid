@@ -154,7 +154,7 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 			continue
 		fi
 		;;
-	2) #check: Selected gateway last-seen
+	2) #check: Selected gateway's last-seen
 		GWM=`cat /sys/kernel/debug/batman_adv/bat0/gateways | grep "^=>" | cut -d" " -f2`
 		if [ "$GWM" == "" ]; then
 			GWM="00:00:00:00:00"
