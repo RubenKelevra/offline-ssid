@@ -11,7 +11,7 @@ define Package/gluon-offline-ssid
   SECTION:=gluon
   CATEGORY:=Gluon
   TITLE:=Offline SSID
-  DEPENDS:=+gluon-core +kmod-batman-adv +batctl
+  DEPENDS:=+gluon-core +kmod-batman-adv-legacy +batctl-legacy
 endef
 
 define Build/Prepare
