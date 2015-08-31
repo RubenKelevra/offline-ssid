@@ -143,7 +143,7 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 			GWQ=0
 		fi
 		echo -n "Debug: Gateway-quality is $GWQ"
-		if [ $GWQ -lt 10 ]; then
+		if [ $GWQ -lt 30 ]; then
 			echo " - this is not okay, we're offline"
 			OFFLINE=1
 			MODE=4
