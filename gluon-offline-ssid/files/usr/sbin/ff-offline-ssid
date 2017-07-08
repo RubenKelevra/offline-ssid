@@ -1,6 +1,6 @@
 #!/bin/sh
-# ff-offline-ssid by RubenKelevra 2013-2015 - ruben@vfn-nrw.de
-# Lizenz: AGPL 3.0 
+# ff-offline-ssid by RubenKelevra 2013-2017 - ruben@vfn-nrw.de
+# Lizenz: AGPL 3.0
 
 #Warning: If SSID was changed in uci, which belongs to freifunk, you need to run "wifi" before you rerun this script.
 
@@ -11,10 +11,11 @@ END=0 #var
 
 #Parameter Checking
 if ! [ $# -eq 1 -o "$1" -eq "$1" ] 2>/dev/null; then
-	echo "Error: Please define a runtime in seconds, 60 is recommended" && exit 2 
+	echo "Error: Please define a runtime in seconds, 60 is recommended" && exit 2
 else
 	RUNTIME=$1
 	echo "Debug: Runtime will be $RUNTIME seconds, please restart me after this time"
+	echo ""
 fi
 
 START=`cat /proc/uptime | cut -d"." -f1`
@@ -24,44 +25,61 @@ END=$(( $END - 1 ))
 #running-pid
 OWNPID=$$
 PIDFILE='/tmp/ff-offline-ssid.pid'
+echo "Debug: Own PID is $OWNPID"
 
 if [ ! -f "$PIDFILE" -a -f "$PIDFILE"_"STOP" ]; then
+	echo "Debug: No PID-File; but a stop file, wait one second..."
 	sleep 1 #sleep to fix possible race-conditions
 fi
 
 if [ ! -f "$PIDFILE" ]; then
+	echo -n "Debug: No PID-File found, writing own one..."
 	echo $OWNPID > $PIDFILE
+	echo " done."
 	[ -f "$PIDFILE"_"STOP" ] && rm "$PIDFILE"_"STOP" #cleanup
 else
+	echo -n "Debug: PID-File found..."
 	#check if pid from pid-file is running
 	if ! kill -0 $(cat "$PIDFILE") > /dev/null 2>&1; then #it's not running
+		echo " but foreign process is no longer running."
+		echo -n "Writing own PID to file..."
 		echo $OWNPID > $PIDFILE
+		echo " done."
 		[ -f "$PIDFILE"_"STOP" ] && rm "$PIDFILE"_"STOP" #cleanup
 	else #pid is running
+		echo -n " foreign process is still running..."
 		if [ -f "$PIDFILE"_"STOP" ]; then # we're exiting now - one waiting process is enouth.
-			logger "Warning: Offline-ssid exiting because pid-file (pid running!) and stopfile already exist."
-			exit 1
+			echo ""; echo "Warning: Offline-ssid exiting because pid-file (pid running!) and stopfile already exist."
+			exit 15
 		fi
+		echo "... request 'em to stop."
 		touch "$PIDFILE"_"STOP"
 		while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do # wait until the pid-process has ended gracefully
-			[ ! -f $PIDFILE ] && echo $OWNPID > $PIDFILE; rm "$PIDFILE"_"STOP"; break
+			echo "waiting ..."
+			if [ ! -f $PIDFILE ]; then
+				echo "Debug: pid-file is now gone."
+				echo -n "Writing own PID-File..."
+				echo $OWNPID > $PIDFILE
+				echo " done."
+				[ -f "$PIDFILE"_"STOP" ] && rm "$PIDFILE"_"STOP" #cleanup
+				break
+			fi
 			sleep 1
 		done
 	fi
+	echo "";echo "starting up now...";echo ""
 fi
 
 # options
-SLEEP=4 # sleep time in seconds between checks
+SLEEP=2        # sleep time in seconds between checks
 ACTIVE_CHECK=1 # enable L2-ping checks to the selected gateways, if last-seen is too high. Needs batctl.
-SSID_PHY0="wireless.client_radio0.ssid_online"
-SSID_PHY0_BOOT="wireless.client_radio0.ssid"
-HOSTAPD_PHY0="/var/run/hostapd-phy0.conf"
-SSID_PHY1="wireless.client_radio1.ssid_online" #if phy1.conf is not found, this will be not used
-SSID_PHY1_BOOT="wireless.client_radio1.ssid" # see comment above
-HOSTAPD_PHY1="/var/run/hostapd-phy1.conf" 
-PING_CNT=3 # ping-packets for ACTIVE_CHECK: 3 is recommended, 5-10 for lossy connections
+PING_CNT=10    # ping-packets for ACTIVE_CHECK: 3 is recommended, 5-10 for lossy connections
 OGM_INT_MULT=2 # tolerable missing OGMs, before pinging (if ACTIVE_CHECK=1): 1 for fast responses, 2 for slower reactions, 3-4 for lossy connections
-LED_STATUS=1 # change system-led, when offline: pulsing flashes with long pauses
+LED_STATUS=1   # change system-led, when offline: pulsing flashes with long pauses
+SUB_CONF_ONLINE_SSID='ssid_online'
+SUB_CONF_BOOT_SSID='ssid'
+MINIMAL_ACCEPTABLE_GWQ=40
+MIN_PING_PERCENT=80 #to be considered online while active checking
 
 # vars
 MODE=1
@@ -69,19 +87,6 @@ GWQ=0
 GWM=""
 GWLS=0
 GWL=0
-OFFLINE=0
-ISOFFLINE=0
-RADIOONE=0
-SSID_0=""
-SSID_1=""
-SSID_0_BOOT=""
-SSID_0_ONLINE=""
-SSID_0_OFFLINE=""
-SSID_1_BOOT=""
-SSID_1_ONLINE=""
-SSID_1_OFFLINE=""
-CHANGED=0
-FORCE_CHANGE=0
 
 # checking batctl
 if [ $ACTIVE_CHECK -eq 1 ]; then
@@ -89,28 +94,8 @@ if [ $ACTIVE_CHECK -eq 1 ]; then
 fi
 
 # checking files and options
-if [ ! -f $HOSTAPD_PHY0 ]; then 
-	echo "Error: PHY0 Hostapd-File not found" && exit 2
-
-elif [ "$(uci get $SSID_PHY0_BOOT 2>/dev/null)" == "" ]; then
-	echo "Error: UCI can't find Boot-SSID for Radio0 Append them with:
-uci set $SSID_PHY0_BOOT=x
-uci commit" && exit 2
-
-elif [ "$(uci get $SSID_PHY0 2>/dev/null)" == "" ]; then
-	echo "Error: UCI can't find SSID for Radio0. Append them with:
-uci set $SSID_PHY0=x
-uci commit" && exit 2
-
-elif [ -f $HOSTAPD_PHY1 -a "$(uci get $SSID_PHY1_BOOT 2>/dev/null)" == "" ]; then
-	echo "Error: UCI can't find Boot-SSID for Radio1 Append them with:
-uci set $SSID_PHY1_BOOT=x
-uci commit" && exit 2
-
-elif [ -f $HOSTAPD_PHY1 -a "$(uci get $SSID_PHY1 2>/dev/null)" == "" ]; then
-	echo "Error: UCI can't find SSID for Radio1. Append them with:
-uci set $SSID_PHY1=x
-uci commit" && exit 2
+if [ "$(ls -l /var/run/hostapd-phy*.conf | wc -l)" -eq 0 ]; then
+	echo "Error: No Hostapd-Config-File was found" && exit 2
 
 elif ! [ -f /etc/diag.sh ]; then
 	if [ $LED_STATUS -eq 1 ]; then
@@ -124,9 +109,9 @@ if [ $LED_STATUS -eq 1 ]; then
 	get_status_led
 fi
 
-DEVICE=`cat /proc/sys/kernel/hostname`
-if [ ${#DEVICE} -gt 16 ]; then #cut device-name
-	DEVICE="${DEVICE:0:13}..."
+HN=`cat /proc/sys/kernel/hostname`
+if [ ${#HN} -gt 16 ]; then #cut hostname
+	HN="${HN:0:13}..."
 fi
 
 while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
@@ -135,7 +120,7 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 		rm $PIDFILE
 		exit 42
 	fi
-	
+
 	case $MODE in
 	1) # check: does batman know any gateway?
 		GWQ=`cat /sys/kernel/debug/batman_adv/bat0/gateways | egrep ' \([\ 0-9]+\) ' | cut -d\( -f2 | cut -d\) -f1 | sort -n | tail -n1`
@@ -143,7 +128,7 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 			GWQ=0
 		fi
 		echo -n "Debug: Gateway-quality is $GWQ"
-		if [ $GWQ -lt 30 ]; then
+		if [ "$GWQ" -lt "$MINIMAL_ACCEPTABLE_GWQ" ]; then
 			echo " - this is not okay, we're offline"
 			OFFLINE=1
 			MODE=4
@@ -160,15 +145,12 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 			GWM="00:00:00:00:00"
 		fi
 		GWLS=`cat /sys/kernel/debug/batman_adv/bat0/originators | grep "^$GWM" | cut -d" " -f3-5 | cut -d"s" -f1 | cut -d"." -f1`
-		if ! [ "$GWLS" -eq "$GWLS" ] 2>/dev/null; then
-			GWLS=65535
-		fi
-		if [ $GWLS -eq 65535 ] ; then # if there's no gateway found, skipping active ACTIVE_CHECK
+		if ! [ "$GWLS" -eq "$GWLS" ] 2>/dev/null; then # there's no gateway found, skipping active ACTIVE_CHECK
 			MODE=4
 			OFFLINE=1
 			echo "Debug: No gateway in originators found - we're offline."
 		else
-			echo -n "Debug: Selected gateway last-seen is $GWLS seconds"
+			echo -n "Debug: Selected gateway last-seen $GWLS second(s) ago"
 			if [ $GWLS -gt $(( `cat /sys/devices/virtual/net/bat0/mesh/orig_interval` / 1000 * $OGM_INT_MULT)) ]; then
 				echo " - this is not okay, we seem to be offline"
 				OFFLINE=1
@@ -181,23 +163,17 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 			fi
 		fi
 		;;
-	3) #check: gateway is reachable 
+	3) #check: gateway is reachable
 		if [ $ACTIVE_CHECK -eq 1 ]; then
 			echo -n "Debug: Active-checking enabled, pinging selected gateway..."
 			GWL=`batctl ping -c$PING_CNT $GWM | grep "packet loss" | cut -d" " -f6 | cut -d"%" -f1`
-			if [ "$GWL" == "" ]; then
-				GWL=404
-			fi
 			if ! [ "$GWL" -eq "$GWL" ] 2>/dev/null; then
-				GWL=404
-			fi
-			if [ $GWL -eq 404 ]; then
 				echo " ERROR: Ping-command failed"
 				OFFLINE=1
 			else
 				echo " done."
-				echo -n "Debug: Packetloss ($GWL %) " 
-				if [ $GWL -lt 100 ]; then
+				echo -n "Debug: Packetloss ($GWL %) "
+				if [ "$GWL" -gt "$MIN_PING_PERCENT" ]; then
 					OFFLINE=0
 					echo "fine."
 				else
@@ -222,182 +198,144 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 		echo "Error: Fatal error." && exit 2
 		;;
 	esac
-	
-	FORCE_CHANGE=0
-	ISOFFLINE=0
-	SSID_0_BOOT=""
-	SSID_0_ONLINE=""
-	SSID_0_OFFLINE=""
-	RADIOONE=0 
-	SSID_1_BOOT=""		      
-	SSID_1_ONLINE=""
-	SSID_1_OFFLINE=""
-	CHANGED=0
 
-	
-	if ! [ -f $HOSTAPD_PHY0 ]; then
-		echo "ERROR: Hostapd-phy0.conf missing. Skipping any SSID change."
-		continue
-	fi	
+	LED_STATUS_SET=0 #Only change LED once if there are multiply phy's
 
-	### RADIO 0 ###
+	for CLIENT_RADIO in $(uci show wireless | grep 'wireless.client_radio' | grep 'ifname' | grep '='\''client' | cut -d '=' -f1 | cut -d '.' -f2); do
 
-	SSID_0_BOOT="$(uci get $SSID_PHY0_BOOT)"
-	SSID_0_ONLINE="$(uci get $SSID_PHY0)"
-	# generate offline-SSID
-	if [ ${#SSID_0_ONLINE} -gt $(( 23 - ${#DEVICE} )) ]; then  #cut ssid to the maximum
-		SSID_0_OFFLINE="${SSID_0_ONLINE:0:$(( 20 - ${#DEVICE} ))}..."
-	else
-		SSID_0_OFFLINE=$SSID_0_ONLINE
-	fi
-	SSID_0_OFFLINE="Offline-$SSID_0_OFFLINE-$DEVICE"
-
-	# get hostap-status
-	SSID_0=`cat $HOSTAPD_PHY0 | grep "^ssid=$SSID_0_ONLINE"`
-	[ -z "$SSID_0" ] && SSID_0=`cat $HOSTAPD_PHY0 | grep "^ssid=$SSID_0_OFFLINE"`
-	[ -z "$SSID_0" ] && SSID_0=`cat $HOSTAPD_PHY0 | grep "^ssid=$SSID_0_BOOT"`
-	SSID_0=${SSID_0:5} #rm ssid=
-	
-#	echo "Debug: RADIO0:"
-#	echo "      SSID for boot   : '$SSID_0_BOOT'"
-#	echo "      SSID for online : '$SSID_0_ONLINE'"
-#	echo "      SSID for offline: '$SSID_0_OFFLINE'"
-
-	if [ "$SSID_0_BOOT" == "" -o "$SSID_0_ONLINE" == "" -o "$SSID_0_OFFLINE" == "" ]; then
-		echo "ERROR: fetching / generating of SSIDs failed for radio0"
-		continue
-	fi
-	
-	echo -n "Debug: Hostapd for radio0 is configured to SSID '$SSID_0', "
-
-	if [ "$SSID_0" == "$SSID_0_ONLINE" ]; then
+		FORCE_CHANGE=0
 		ISOFFLINE=0
-		echo "our online-SSID"
-	elif [ "$SSID_0" == "$SSID_0_OFFLINE" ]; then		
-		ISOFFLINE=1
-		echo "our offline-SSID"
-	elif [ "$SSID_0" == "$SSID_0_BOOT" ]; then
-		FORCE_CHANGE=1
-		echo "our boot-SSID"
-	else
-		FORCE_CHANGE=1
-		echo "WARNING: this seems wrong, we're changing it now."
-	fi
+		SSID_BOOT=""
+		SSID_ONLINE=""
+		SSID_OFFLINE=""
+		NEED_CHANGE=0
+		HPID=""
+		PHY_DEV=""
+		IFNAME=""
 
-	### RADIO 1 ###
-	
-	if [ -f $HOSTAPD_PHY1 ]; then
-		RADIOONE=1
+		SSID_ONLINE="$(uci get wireless.$CLIENT_RADIO.$SUB_CONF_ONLINE_SSID)"
+		SSID_BOOT="$(uci get wireless.$CLIENT_RADIO.$SUB_CONF_BOOT_SSID)"
 
-		SSID_1_BOOT="$(uci get $SSID_PHY1_BOOT)"
-		SSID_1_ONLINE="$(uci get $SSID_PHY1)"
-		# generate offline-SSID
-		if [ ${#SSID_1_ONLINE} -gt $(( 23 - ${#DEVICE} )) ]; then  #cut ssid to the maximum
-			SSID_1_OFFLINE="${SSID_1_ONLINE:0:$(( 20 - ${#DEVICE} ))}..."
-		else
-			SSID_1_OFFLINE=$SSID_1_ONLINE
+		IFNAME="$(uci get wireless.$CLIENT_RADIO.ifname)"
+		tmp="$(readlink -f /sys/devices/platform/*/net/$IFNAME/phy80211)"
+		PHY_DEV="${tmp##*/}"
+		unset tmp
+		if [ -z "$PHY_DEV" ]; then
+			echo "ERROR: Could not detect phy-dev for ifname '$IFNAME'. Skipping any SSID change."
+			continue
 		fi
-		SSID_1_OFFLINE="Offline-$SSID_1_OFFLINE-$DEVICE"
+		HOSTAPD_CONF="/var/run/hostapd-$PHY_DEV.conf"
+
+
+		if ! [ -f $HOSTAPD_CONF ]; then
+			echo "ERROR: Hostapd conf missing (PHY_DEV=$PHY_DEV;IFNAME=$IFNAME). Skipping any SSID change."
+			continue
+		elif [ "$SSID_BOOT" == "" ]; then
+			echo "Error: UCI can't find Boot-SSID for interface '$IFNAME'. Append them with:"
+			echo "uci set wireless.$CLIENT_RADIO.$SUB_CONF_BOOT_SSID=x"
+			echo "uci commit wireless"
+			exit 2
+		elif [ "$SSID_ONLINE" == "" ]; then
+			echo "Error: UCI can't find SSID for interface '$IFNAME'. Append them with:"
+			echo "uci set wireless.$CLIENT_RADIO.$SUB_CONF_ONLINE_SSID=x"
+			echo "uci commit wireless"
+			exit 2
+		fi
+
+		# generate offline-SSID
+		if [ ${#SSID_ONLINE} -gt $(( 23 - ${#HN} )) ]; then  #cut ssid to the maximum
+			SSID_OFFLINE="${SSID_0_ONLINE:0:$(( 20 - ${#HN} ))}..."
+		else
+			SSID_OFFLINE=$SSID_ONLINE
+		fi
+		SSID_OFFLINE="Offline-$SSID_OFFLINE-$HN"
+
+		if [ "$SSID_OFFLINE" == "" ]; then
+			echo "ERROR: generating of Offline-SSID failed for $IFNAME"
+			continue
+		fi
 
 		# get hostap-status
-		SSID_1=`cat $HOSTAPD_PHY1 | grep "^ssid=$SSID_1_ONLINE"`
-		[ -z "$SSID_1" ] && SSID_1=`cat $HOSTAPD_PHY1 | grep "^ssid=$SSID_1_OFFLINE"`
-		[ -z "$SSID_1" ] && SSID_1=`cat $HOSTAPD_PHY1 | grep "^ssid=$SSID_1_BOOT"`
-		SSID_1=${SSID_1:5} # rm ssid=
-	
-#		echo "Debug: RADIO1:"
-#		echo "      SSID for boot   : '$SSID_1_BOOT'"
-#		echo "      SSID for online : '$SSID_1_ONLINE'"
-#		echo "      SSID for offline: '$SSID_1_OFFLINE'"
+		CURRENT_SSID=`cat $HOSTAPD_CONF | grep "^ssid=$SSID_ONLINE"`
+		[ -z "$CURRENT_SSID" ] && CURRENT_SSID=`cat $HOSTAPD_CONF | grep "^ssid=$SSID_OFFLINE"`
+		[ -z "$CURRENT_SSID" ] && CURRENT_SSID=`cat $HOSTAPD_CONF | grep "^ssid=$SSID_BOOT"`
+		CURRENT_SSID=${CURRENT_SSID:5} #rm ssid=
 
-		if [ "$SSID_1_BOOT" == "" -o "$SSID_1_ONLINE" == "" -o "$SSID_1_OFFLINE" == "" ]; then
-			echo "ERROR: fetching / generating of SSIDs failed for radio1"
-			continue
-		fi
-	
-		echo -n "Debug: Hostapd for radio1 is configured to SSID '$SSID_1', "
+#		echo "Debug: $IFNAME:"
+#		echo "      SSID for boot   : '$SSID_BOOT'"
+#		echo "      SSID for online : '$SSID_ONLINE'"
+#		echo "      SSID for offline: '$SSID_OFFLINE'"
+#		echo "      Current SSID is : '$CURRENT_SSID'"
 
-		if [ $ISOFFLINE -eq 0 -a "$SSID_1" != "$SSID_1_ONLINE" -a $FORCE_CHANGE -eq 0 ]; then
+		echo -n "Debug: Hostapd for $IFNAME is configured to SSID '$CURRENT_SSID', "
+
+		if [ "$CURRENT_SSID" == "$SSID_ONLINE" ]; then
+			ISOFFLINE=0
+			echo "our online-SSID"
+		elif [ "$CURRENT_SSID" == "$SSID_OFFLINE" ]; then
+			ISOFFLINE=1
+			echo "our offline-SSID"
+		elif [ "$CURRENT_SSID" == "$SSID_BOOT" ]; then
 			FORCE_CHANGE=1
-			echo "WARNING: SSID for radio1 not in radio0 state, forcing change."
-		elif [ $ISOFFLINE -eq 1 -a "$SSID_1" != "$SSID_1_OFFLINE" -a $FORCE_CHANGE -eq 0 ]; then		
-			FORCE_CHANGE=1
-			echo "WARNING: SSID for radio1 not in radio0 state, forcing change."
-		elif [ $FORCE_CHANGE -eq 0 -a "$SSID_1" == "$SSID_1_BOOT" ]; then
-			FORCE_CHANGE=1
-			echo "WARNING: SSID for radio1 still in booting status, forcing change."
+			echo "our boot-SSID"
 		else
-			echo "ok."
+			FORCE_CHANGE=1
+			echo "WARNING: this seems wrong, we're changing it now."
 		fi
-	fi
-	
-	### Checking if update is needed ###
-	
-	echo "Debug: OFFLINE=$OFFLINE ISOFFLINE=$ISOFFLINE FORCE_CHANGE=$FORCE_CHANGE"
-	
-	if ! [ $FORCE_CHANGE -eq 1 ]; then
-		
-		if [ $OFFLINE -eq 1 -a $ISOFFLINE -eq 0 ]; then
-			echo "Debug: Our check says, we're offline, need to change SSIDs"
-			CHANGED=1
-		elif [ $OFFLINE -eq 0 -a $ISOFFLINE -eq 1 ]; then
-			echo "Debug: Our check says, we're back online, need to change SSIDs"
-			CHANGED=1
-		fi
-	else
-		echo "Debug: Need to change SSIDs."
-	fi
-	
-	### getting right SSIDs and led-changes ###
 
-	if [ $CHANGED -eq 1 -o $FORCE_CHANGE -eq 1 ]; then
-		if [ $OFFLINE -eq 1 ]; then
-			SSID_0=$SSID_0_OFFLINE
-			if [ $LED_STATUS -eq 1 ]; then
-				status_led_set_timer 50 1200
+		### Checking if update is needed ###
+
+		echo "Debug: OFFLINE=$OFFLINE ISOFFLINE=$ISOFFLINE FORCE_CHANGE=$FORCE_CHANGE"
+
+		if ! [ $FORCE_CHANGE -eq 1 ]; then
+			if [ $OFFLINE -eq 1 -a $ISOFFLINE -eq 0 ]; then
+				echo "Debug: Our check says, we're offline, need to change SSIDs"
+				NEED_CHANGE=1
+			elif [ $OFFLINE -eq 0 -a $ISOFFLINE -eq 1 ]; then
+				echo "Debug: Our check says, we're back online, need to change SSIDs"
+				NEED_CHANGE=1
 			fi
 		else
-			SSID_0=$SSID_0_ONLINE
-			if [ $LED_STATUS -eq 1 ]; then
-				status_led_on
-			fi
+			echo "Debug: Need to change SSIDs."
 		fi
 
-		SSID_0="ssid=$SSID_0"
-		
-		if [ $RADIOONE -eq 1 ]; then
+		### setting SSIDs and LED-Status (on the first interface only) ###
+
+		if [ $NEED_CHANGE -eq 1 -o $FORCE_CHANGE -eq 1 ]; then
 			if [ $OFFLINE -eq 1 ]; then
-				SSID_1=$SSID_1_OFFLINE
+				SSID="$SSID_OFFLINE"
+				if [ $LED_STATUS -eq 1 -a $LED_STATUS_SET -eq 0 ]; then
+					status_led_set_timer 50 1200
+					LED_STATUS_SET=1
+				fi
 			else
-				SSID_1=$SSID_1_ONLINE
+				SSID="$SSID_ONLINE"
+				if [ $LED_STATUS -eq 1 -a $LED_STATUS_SET -eq 0 ]; then
+					status_led_on
+					LED_STATUS_SET=1
+				fi
 			fi
-			
-			SSID_1="ssid=$SSID_1"
-		fi
-		
-		if ! [ -f $HOSTAPD_PHY0 ]; then
-			echo "ERROR: Hostapd-phy0.conf gone. Skipping the SSID-change."
-			continue
-		fi	
-		
-		[ ! -z "$SSID_0_ONLINE" ] && sed -i -e "s/^ssid=$SSID_0_ONLINE/$SSID_0/" "$HOSTAPD_PHY0"
-		[ ! -z "$SSID_0_OFFLINE" ] && sed -i -e "s/^ssid=$SSID_0_OFFLINE/$SSID_0/" "$HOSTAPD_PHY0"
-		[ ! -z "$SSID_0_BOOT" ] && sed -i -e "s/^ssid=$SSID_0_BOOT/$SSID_0/" "$HOSTAPD_PHY0"
-		
-		if [ $RADIOONE -eq 1 ]; then
-		
-			if [ -f $HOSTAPD_PHY1 ]; then
-				[ ! -z "$SSID_1_ONLINE" ] && sed -i -e "s/^ssid=$SSID_1_ONLINE/$SSID_1/" "$HOSTAPD_PHY1"
-				[ ! -z "$SSID_1_OFFLINE" ] && sed -i -e "s/^ssid=$SSID_1_OFFLINE/$SSID_1/" "$HOSTAPD_PHY1"
-				[ ! -z "$SSID_1_BOOT" ] && sed -i -e "s/^ssid=$SSID_1_BOOT/$SSID_1/" "$HOSTAPD_PHY1"
-			else
-				echo "Error: Hostapd-phy1.conf is gone ... we can't process the SSID-change for radio1"
+
+			SSID="ssid=$SSID"
+
+			if ! [ -f $HOSTAPD_CONF ]; then
+				echo "ERROR: $HOSTAPD_CONF gone. Skipping the SSID-change."
+				continue
 			fi
+
+			sed -i -e "s/^ssid=$SSID_ONLINE/$SSID/" "$HOSTAPD_CONF"
+			sed -i -e "s/^ssid=$SSID_OFFLINE/$SSID/" "$HOSTAPD_CONF"
+			sed -i -e "s/^ssid=$SSID_BOOT/$SSID/" "$HOSTAPD_CONF"
+
+			HPID="$(ps | grep "$HOSTAPD_CONF" | grep -v "grep" | awk '{ print $1; }')"
+			if [ -z "$HPID" ]; then
+				echo "ERROR: Hostapd pid for $PHY_DEV could not be found. Skipping the SSID-change."
+				continue
+			fi
+			echo -n "Debug: HUPing hostapd PID $HPID now..."
+			kill -HUP $HPID
+			echo "done."
 		fi
-		
-		echo -n "Debug: HUPing hostapd now..."
-		killall -HUP hostapd
-		echo "done."
-	fi
+	done
 done
 [ -f "$PIDFILE" ] && rm "$PIDFILE" #cleanup
