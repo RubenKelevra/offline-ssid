@@ -1,2 +1,1 @@
-*/2    * * * * sh /usr/sbin/ff-offline-ssid 60
-1-59/2 * * * * sh /usr/sbin/ff-offline-ssid 60
+0 * * * * sh /usr/sbin/ff-offline-ssid 3600
