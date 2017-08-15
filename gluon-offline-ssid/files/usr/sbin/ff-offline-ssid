@@ -218,6 +218,7 @@ while [ `cat /proc/uptime | cut -d"." -f1` -lt $END ]; do
 
 		IFNAME="$(uci get wireless.$CLIENT_RADIO.ifname)"
 		tmp="$(readlink -f /sys/devices/platform/*/net/$IFNAME/phy80211)"
+		[ -z "$tmp" ] && tmp=`echo "/$(cat /sys/devices/pci*/*/net/$IFNAME/phy80211/name)"`
 		PHY_DEV="${tmp##*/}"
 		unset tmp
 		if [ -z "$PHY_DEV" ]; then
